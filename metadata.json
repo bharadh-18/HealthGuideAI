@@ -1,0 +1,5 @@
+{
+  "name": "HealthGuide AI",
+  "description": "A multilingual health assistant for first-level symptom checks and general health inquiries, featuring contextual memory and a professional medical UI.",
+  "requestFramePermissions": []
+}
