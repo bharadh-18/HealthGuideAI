@@ -4,11 +4,18 @@ export enum Role {
   ASSISTANT = 'assistant'
 }
 
+export interface Attachment {
+  data: string; // base64
+  mimeType: string;
+  name: string;
+}
+
 export interface Message {
   id: string;
   role: Role;
   content: string;
   timestamp: Date;
+  attachment?: Attachment;
 }
 
 export interface ChatSession {

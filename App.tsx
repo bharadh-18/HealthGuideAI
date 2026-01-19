@@ -5,7 +5,7 @@ import { ChatWindow } from './components/ChatWindow';
 import { Header } from './components/Header';
 import { Disclaimer } from './components/Disclaimer';
 import { BookingModal } from './components/BookingModal';
-import { ChatSession, Role, Message, SUPPORTED_LANGUAGES } from './types';
+import { ChatSession, Role, Message, SUPPORTED_LANGUAGES, Attachment } from './types';
 import { geminiService } from './services/geminiService';
 
 const App: React.FC = () => {
@@ -52,14 +52,15 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
-    if (!activeSessionId || !content.trim()) return;
+  const handleSendMessage = async (content: string, attachment?: Attachment) => {
+    if (!activeSessionId || (!content.trim() && !attachment)) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: Role.USER,
-      content,
+      content: content || (attachment ? `Analyzed document: ${attachment.name}` : ""),
       timestamp: new Date(),
+      attachment
     };
 
     setSessions(prev => prev.map(s => {
@@ -67,7 +68,7 @@ const App: React.FC = () => {
         return {
           ...s,
           messages: [...s.messages, userMessage],
-          title: s.messages.length === 0 ? content.slice(0, 30) + (content.length > 30 ? '...' : '') : s.title
+          title: s.messages.length === 0 ? (content.slice(0, 30) || attachment?.name || 'New Query') : s.title
         };
       }
       return s;
@@ -78,7 +79,7 @@ const App: React.FC = () => {
 
     try {
       await geminiService.sendMessage(
-        content, 
+        content || "Please analyze this document.", 
         (chunk) => {
           setSessions(prev => prev.map(s => {
             if (s.id === activeSessionId) {
@@ -105,7 +106,8 @@ const App: React.FC = () => {
         },
         (details) => {
           setBookingDetails(details);
-        }
+        },
+        attachment ? { data: attachment.data, mimeType: attachment.mimeType } : undefined
       );
     } catch (error) {
       console.error(error);

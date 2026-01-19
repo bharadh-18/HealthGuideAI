@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Chat, GenerateContentResponse, Type, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
 
 const API_KEY = process.env.API_KEY || "";
@@ -32,54 +32,85 @@ const bookAppointmentTool: FunctionDeclaration = {
 
 export class GeminiService {
   private ai: GoogleGenAI;
-  private chatInstance: Chat | null = null;
+  private history: any[] = [];
+  private systemInstruction: string = "";
 
   constructor() {
     this.ai = new GoogleGenAI({ apiKey: API_KEY });
   }
 
   public async startNewChat(language: string = 'en') {
-    const systemInstruction = `
-      You are HealthGuide AI, a helpful medical assistant.
+    this.history = [];
+    this.systemInstruction = `
+      You are HealthGuide AI, a warm, friendly, and professional medical assistant.
       
-      BEHAVIOR:
-      1. Always state you are an AI.
-      2. To see doctors, you MUST call 'get_doctors'.
-      3. To book, you MUST collect: Name, Age, Reason, Address, Zipcode, and a chosen Doctor.
+      PERSONALITY:
+      - Be empathetic, caring, and human-like in your tone. 
+      - If a user is in pain or worried, acknowledge their feelings first.
+      - Respond warmly to greetings and casual conversation.
+      
+      FILE HANDLING:
+      - If the user provides a file (like a prescription or report), summarize the key points clearly.
+      - Explain medications, dosages, and instructions mentioned in the document.
+      - Remind the user to follow their doctor's advice exactly.
+      
+      CORE BEHAVIOR:
+      1. Always state you are an AI, not a doctor.
+      2. To see doctors, call 'get_doctors'.
+      3. To book, collect: Name, Age, Reason, Address, Zipcode, and a chosen Doctor.
       4. Call 'book_appointment' only when ALL data is present.
       
       Language: ${language}.
     `;
-
-    this.chatInstance = this.ai.chats.create({
-      model: 'gemini-3-pro-preview',
-      config: {
-        systemInstruction,
-        temperature: 0.1,
-        tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
-      },
-    });
   }
 
   public async sendMessage(
     message: string, 
     onChunk: (text: string) => void,
-    onBookingSuccess?: (details: any) => void
+    onBookingSuccess?: (details: any) => void,
+    attachment?: { data: string, mimeType: string }
   ) {
-    if (!this.chatInstance) {
-      await this.startNewChat();
-    }
-
     try {
-      let response = await this.chatInstance!.sendMessage({ message });
-      
+      // Build user parts
+      const userParts: any[] = [{ text: message }];
+      if (attachment) {
+        userParts.unshift({
+          inlineData: {
+            data: attachment.data,
+            mimeType: attachment.mimeType
+          }
+        });
+      }
+
+      // Add user turn to local history
+      this.history.push({ role: 'user', parts: userParts });
+
       let iterations = 0;
       const MAX_ITERATIONS = 4;
+      let finalResponseText = "";
+
+      const generate = async () => {
+        const result = await this.ai.models.generateContent({
+          model: 'gemini-3-pro-preview',
+          contents: this.history,
+          config: {
+            systemInstruction: this.systemInstruction,
+            temperature: 0.7,
+            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
+          },
+        });
+        return result;
+      };
+
+      let response = await generate();
 
       while (response.functionCalls && response.functionCalls.length > 0 && iterations < MAX_ITERATIONS) {
         iterations++;
-        const results = [];
         
+        // Add model turn (with tool calls) to history
+        this.history.push(response.candidates?.[0]?.content);
+
+        const toolResponses = [];
         for (const fc of response.functionCalls) {
           let result;
           if (fc.name === 'get_doctors') {
@@ -87,25 +118,34 @@ export class GeminiService {
           } else if (fc.name === 'book_appointment') {
             const { doctorId, patientName, patientAge, reason, address, zipcode } = fc.args as any;
             result = await bookAppointment(doctorId, patientName, patientAge, reason, address, zipcode);
-            
             if (result.success && onBookingSuccess) {
               onBookingSuccess(result.bookingDetails);
             }
           }
-          results.push({ tool: fc.name, data: result });
+          toolResponses.push({
+            functionResponse: {
+              name: fc.name,
+              id: fc.id,
+              response: { result }
+            }
+          });
         }
 
-        response = await this.chatInstance!.sendMessage({
-          message: `The database returned: ${JSON.stringify(results)}. Summarize the outcome briefly.`
-        });
+        // Add tool responses turn to history
+        this.history.push({ role: 'user', parts: toolResponses });
+        response = await generate();
       }
 
-      const finalText = response.text || "I've processed your request.";
-      onChunk(finalText);
-      return finalText;
+      finalResponseText = response.text || "I've analyzed that for you. How else can I help?";
+      
+      // Save model turn to history
+      this.history.push({ role: 'model', parts: [{ text: finalResponseText }] });
+      
+      onChunk(finalResponseText);
+      return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      const errorMsg = "System connection issue. Please try again.";
+      const errorMsg = "I'm sorry, I hit a snag while processing your request. Please try again.";
       onChunk(errorMsg);
       return errorMsg;
     }
