@@ -42,23 +42,35 @@ export class GeminiService {
   public async startNewChat(language: string = 'en') {
     this.history = [];
     this.systemInstruction = `
-      You are HealthGuide AI, a warm, friendly, and professional medical assistant.
+      You are HealthGuide AI, a warm, friendly, and professional medical and nutrition assistant.
       
-      PERSONALITY:
-      - Be empathetic, caring, and human-like in your tone. 
-      - If a user is in pain or worried, acknowledge their feelings first.
-      - Respond warmly to greetings and casual conversation.
+      EMPATHY & TONE:
+      - Always start with empathy and a warm greeting.
+      - Be encouraging about healthy lifestyle changes.
+      
+      NUTRITION & DIETETICS (NEW MODULE):
+      1. CALORIE CALCULATION: If a user asks for daily calorie needs, you MUST ask for: 
+         - Age, Sex, Weight (kg/lbs), Height (cm/ft), and Activity Level (Sedentary to Highly Active).
+         - Use the Mifflin-St Jeor Equation to estimate BMR and TDEE.
+      2. MEAL SUGGESTIONS: Provide balanced meals for:
+         - Veg (Vegetarian), Non-Veg, and Vegan dietary preferences.
+         - Ensure each suggestion includes a protein source, healthy fats, and complex carbs.
+      3. JUNK FOOD ALTERNATIVES: When asked about junk food (e.g., pizza, burgers, chips), provide a "Healthy Swap" table.
+      4. PORTION CONTROL: Teach the "Hand Method" (Palm = Protein, Fist = Veggies, Cupped Hand = Carbs, Thumb = Fats).
+      5. NUTRITION FACTS: Use your knowledge and the Search Tool to provide accurate caloric and macro information for specific foods.
+      
+      SYMPTOM CHECKING LOGIC:
+      1. PROBE FIRST: For symptoms like fever, ask temperature, duration, and "red flags".
+      2. SEVERITY: If fever > 103°F or red flags present, prioritize doctor referral via 'get_doctors'.
+      3. HOME CARE: Suggest mild treatments only for low-severity cases.
       
       FILE HANDLING:
-      - If the user provides a file (like a prescription or report), summarize the key points clearly.
-      - Explain medications, dosages, and instructions mentioned in the document.
-      - Remind the user to follow their doctor's advice exactly.
+      - Summarize prescriptions or medical reports clearly.
       
       CORE BEHAVIOR:
-      1. Always state you are an AI, not a doctor.
-      2. To see doctors, call 'get_doctors'.
-      3. To book, collect: Name, Age, Reason, Address, Zipcode, and a chosen Doctor.
-      4. Call 'book_appointment' only when ALL data is present.
+      1. Always state you are an AI assistant.
+      2. Use 'get_doctors' for medical professional referrals.
+      3. Use 'googleSearch' for the most up-to-date nutrition facts or medical research.
       
       Language: ${language}.
     `;
@@ -66,12 +78,11 @@ export class GeminiService {
 
   public async sendMessage(
     message: string, 
-    onChunk: (text: string) => void,
+    onChunk: (text: string, groundingSources?: any[]) => void,
     onBookingSuccess?: (details: any) => void,
     attachment?: { data: string, mimeType: string }
   ) {
     try {
-      // Build user parts
       const userParts: any[] = [{ text: message }];
       if (attachment) {
         userParts.unshift({
@@ -82,32 +93,29 @@ export class GeminiService {
         });
       }
 
-      // Add user turn to local history
       this.history.push({ role: 'user', parts: userParts });
 
       let iterations = 0;
       const MAX_ITERATIONS = 4;
       let finalResponseText = "";
+      let groundingSources: any[] = [];
 
       const generate = async () => {
-        const result = await this.ai.models.generateContent({
+        return await this.ai.models.generateContent({
           model: 'gemini-3-pro-preview',
           contents: this.history,
           config: {
             systemInstruction: this.systemInstruction,
             temperature: 0.7,
-            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
+            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }, { googleSearch: {} }]
           },
         });
-        return result;
       };
 
       let response = await generate();
 
       while (response.functionCalls && response.functionCalls.length > 0 && iterations < MAX_ITERATIONS) {
         iterations++;
-        
-        // Add model turn (with tool calls) to history
         this.history.push(response.candidates?.[0]?.content);
 
         const toolResponses = [];
@@ -131,21 +139,20 @@ export class GeminiService {
           });
         }
 
-        // Add tool responses turn to history
         this.history.push({ role: 'user', parts: toolResponses });
         response = await generate();
       }
 
-      finalResponseText = response.text || "I've analyzed that for you. How else can I help?";
+      finalResponseText = response.text || "I'm here to support your health and nutrition journey.";
+      groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       
-      // Save model turn to history
       this.history.push({ role: 'model', parts: [{ text: finalResponseText }] });
       
-      onChunk(finalResponseText);
+      onChunk(finalResponseText, groundingSources);
       return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      const errorMsg = "I'm sorry, I hit a snag while processing your request. Please try again.";
+      const errorMsg = "I'm sorry, I'm having trouble with my nutrition database right now. Please try again.";
       onChunk(errorMsg);
       return errorMsg;
     }

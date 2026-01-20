@@ -5,10 +5,12 @@ import { ChatWindow } from './components/ChatWindow';
 import { Header } from './components/Header';
 import { Disclaimer } from './components/Disclaimer';
 import { BookingModal } from './components/BookingModal';
-import { ChatSession, Role, Message, SUPPORTED_LANGUAGES, Attachment } from './types';
+import { LoginPage } from './components/LoginPage';
+import { ChatSession, Role, Message, SUPPORTED_LANGUAGES, Attachment, User } from './types';
 import { geminiService } from './services/geminiService';
 
 const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -18,11 +20,31 @@ const App: React.FC = () => {
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
+  // Check for existing login on mount
   useEffect(() => {
-    if (sessions.length === 0) {
-      handleNewChat();
+    const savedUser = localStorage.getItem('healthguide_user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
     }
   }, []);
+
+  useEffect(() => {
+    if (user && sessions.length === 0) {
+      handleNewChat();
+    }
+  }, [user]);
+
+  const handleLogin = (newUser: User) => {
+    localStorage.setItem('healthguide_user', JSON.stringify(newUser));
+    setUser(newUser);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('healthguide_user');
+    setUser(null);
+    setSessions([]);
+    setActiveSessionId(null);
+  };
 
   const handleNewChat = () => {
     const newSession: ChatSession = {
@@ -80,14 +102,14 @@ const App: React.FC = () => {
     try {
       await geminiService.sendMessage(
         content || "Please analyze this document.", 
-        (chunk) => {
+        (chunk, groundingSources) => {
           setSessions(prev => prev.map(s => {
             if (s.id === activeSessionId) {
               const existingMsg = s.messages.find(m => m.id === assistantMessageId);
               if (existingMsg) {
                 return {
                   ...s,
-                  messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, content: chunk } : m)
+                  messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, content: chunk, groundingSources } : m)
                 };
               } else {
                 return {
@@ -96,7 +118,8 @@ const App: React.FC = () => {
                     id: assistantMessageId,
                     role: Role.ASSISTANT,
                     content: chunk,
-                    timestamp: new Date()
+                    timestamp: new Date(),
+                    groundingSources
                   }]
                 };
               }
@@ -116,6 +139,10 @@ const App: React.FC = () => {
     }
   };
 
+  if (!user) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <Sidebar 
@@ -125,6 +152,8 @@ const App: React.FC = () => {
         onNewChat={handleNewChat}
         isOpen={isSidebarOpen}
         toggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        onLogout={handleLogout}
+        user={user}
       />
       
       <main className="flex-1 flex flex-col relative h-full">

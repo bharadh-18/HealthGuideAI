@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { ChatSession } from '../types';
+import { ChatSession, User } from '../types';
 
 interface SidebarProps {
   sessions: ChatSession[];
@@ -9,9 +9,11 @@ interface SidebarProps {
   onNewChat: () => void;
   isOpen: boolean;
   toggle: () => void;
+  onLogout: () => void;
+  user: User;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ sessions, activeId, onSelect, onNewChat, isOpen }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ sessions, activeId, onSelect, onNewChat, isOpen, onLogout, user }) => {
   return (
     <aside className={`${isOpen ? 'w-80' : 'w-0'} bg-slate-900 text-slate-100 transition-all duration-300 ease-in-out flex flex-col overflow-hidden border-r border-slate-800`}>
       <div className="p-4 flex items-center justify-between">
@@ -61,14 +63,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ sessions, activeId, onSelect, 
       </div>
 
       <div className="p-4 border-t border-slate-800 bg-slate-900/50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 font-bold">
-            P
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-600/20 flex items-center justify-center text-blue-400 font-bold border border-blue-600/30">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate w-32">{user.name}</p>
+              <p className="text-[10px] text-slate-500 truncate w-32">{user.email}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-medium">Guest Patient</p>
-            <p className="text-xs text-slate-500">Free Tier</p>
-          </div>
+          <button 
+            onClick={onLogout}
+            className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+            title="Logout"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
         </div>
       </div>
     </aside>

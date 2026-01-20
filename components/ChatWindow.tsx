@@ -11,14 +11,73 @@ interface ChatWindowProps {
 export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTyping }) => {
   const [input, setInput] = useState('');
   const [stagedFile, setStagedFile] = useState<Attachment | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
+
+  // Handle camera stream lifecycle when the modal opens/closes
+  useEffect(() => {
+    let activeStream: MediaStream | null = null;
+
+    const initCamera = async () => {
+      if (!isCameraOpen) return;
+
+      // Check for basic support
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Camera access is not supported or is blocked in this context. Ensure you are using a secure connection (HTTPS).");
+        setIsCameraOpen(false);
+        return;
+      }
+
+      try {
+        // Simplified constraints for maximum compatibility
+        activeStream = await navigator.mediaDevices.getUserMedia({ 
+          video: true,
+          audio: false 
+        });
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = activeStream;
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            console.warn("Auto-play failed, waiting for user interaction:", playErr);
+          }
+        }
+      } catch (err: any) {
+        console.error("Camera access error:", err);
+        
+        let errorMessage = "Could not access camera.";
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          errorMessage = "Camera access was denied by the browser or platform. Please check your browser's permission settings and ensure this site has 'Camera' access enabled.";
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          errorMessage = "No camera found on your device.";
+        } else if (err.name === 'SecurityError') {
+          errorMessage = "Security policy prevented camera access. This usually happens if the site is not secure (must use HTTPS).";
+        }
+
+        alert(errorMessage);
+        setIsCameraOpen(false);
+      }
+    };
+
+    initCamera();
+
+    // Cleanup function to stop tracks when modal closes or component unmounts
+    return () => {
+      if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isCameraOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +92,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTypi
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Basic validation
     const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
     if (!allowedTypes.includes(file.type)) {
       alert('Please upload an image (JPG/PNG) or a PDF file.');
@@ -50,41 +108,103 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTypi
       });
     };
     reader.readAsDataURL(file);
-    // Clear the input so the same file can be picked again if removed
     e.target.value = '';
   };
 
-  const commonQuestions = [
-    "Hello! How are you doing today?",
-    "I have a mild fever and cough.",
-    "Can you summarize my prescription?",
-    "Common causes of back pain?"
+  const stopCamera = () => {
+    setIsCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const base64String = dataUrl.split(',')[1];
+        
+        setStagedFile({
+          data: base64String,
+          mimeType: 'image/jpeg',
+          name: `health_capture_${Date.now()}.jpg`
+        });
+        stopCamera();
+      }
+    }
+  };
+
+  const quickPrompts = [
+    { text: "Calculate my daily calories", icon: "🔥" },
+    { text: "Healthy swaps for junk food", icon: "🥗" },
+    { text: "Vegan meal ideas", icon: "🌱" },
+    { text: "Portion control tips", icon: "🍽️" }
   ];
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white shadow-sm mx-6 mb-6 rounded-2xl border border-slate-200 relative overflow-hidden">
+      {/* Camera Modal */}
+      {isCameraOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl overflow-hidden shadow-2xl w-full max-w-lg relative">
+            <div className="p-4 flex items-center justify-between border-b border-slate-100">
+              <h3 className="font-bold text-slate-800">Camera Preview</h3>
+              <button onClick={stopCamera} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="aspect-video bg-black relative flex items-center justify-center">
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                playsInline 
+                muted
+                className="w-full h-full object-cover"
+              />
+              <canvas ref={canvasRef} className="hidden" />
+            </div>
+            <div className="p-6 flex justify-center gap-4">
+              <button 
+                onClick={capturePhoto}
+                className="w-16 h-16 bg-blue-600 hover:bg-blue-700 text-white rounded-full flex items-center justify-center shadow-lg shadow-blue-500/30 transition-all active:scale-90"
+                title="Capture Photo"
+              >
+                <div className="w-8 h-8 rounded-full border-2 border-white"></div>
+              </button>
+            </div>
+            <p className="text-center text-xs text-slate-400 pb-4 px-4 font-medium">Position clearly and ensure good lighting for analysis.</p>
+          </div>
+        </div>
+      )}
+
       <div 
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar"
       >
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center max-w-md mx-auto py-12">
-            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
-              <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+          <div className="flex flex-col items-center justify-center h-full text-center max-w-2xl mx-auto py-8">
+            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
               </svg>
             </div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Hello there! I'm HealthGuide.</h3>
-            <p className="text-slate-500 mb-8">I'm here to listen and help. You can also upload your prescriptions for a summary.</p>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Welcome to HealthGuide AI</h3>
+            <p className="text-slate-500 mb-8 max-w-sm">Your all-in-one assistant for symptoms, medical reports, and personalized nutrition support.</p>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full">
-              {commonQuestions.map((q, i) => (
+            <div className="grid grid-cols-2 gap-3 w-full">
+              {quickPrompts.map((p, i) => (
                 <button
                   key={i}
-                  onClick={() => onSend(q)}
-                  className="text-left p-3 text-sm bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-200 rounded-xl transition-all text-slate-700 hover:text-blue-700"
+                  onClick={() => onSend(p.text)}
+                  className="flex items-center gap-3 text-left p-4 bg-slate-50 hover:bg-white border border-slate-200 hover:border-blue-300 rounded-xl transition-all group"
                 >
-                  {q}
+                  <span className="text-2xl group-hover:scale-110 transition-transform">{p.icon}</span>
+                  <span className="text-sm font-medium text-slate-700">{p.text}</span>
                 </button>
               ))}
             </div>
@@ -125,6 +245,31 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTypi
                       {line}
                     </p>
                   ))}
+                  
+                  {/* Grounding Sources Rendering */}
+                  {msg.groundingSources && msg.groundingSources.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-slate-200/50">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sources & References</p>
+                      <div className="flex flex-wrap gap-2">
+                        {msg.groundingSources.map((source: any, idx: number) => (
+                          source.web && (
+                            <a 
+                              key={idx} 
+                              href={source.web.uri} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded-lg text-[11px] text-blue-600 hover:text-blue-700 hover:border-blue-300 transition-all shadow-sm"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                              <span className="truncate max-w-[150px]">{source.web.title || 'Source'}</span>
+                            </a>
+                          )
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -180,21 +325,34 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTypi
             accept=".jpg,.jpeg,.png,.pdf"
             className="hidden" 
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="p-3 text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all border border-transparent hover:border-slate-200"
-            title="Attach a prescription or report"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
-          </button>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-3 text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all border border-transparent hover:border-slate-200"
+              title="Attach a prescription or report"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCameraOpen(true)}
+              className="p-3 text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all border border-transparent hover:border-slate-200"
+              title="Take a photo"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={stagedFile ? "Ask about this document..." : "Type your message here..."}
+            placeholder={stagedFile ? "Ask about this document..." : "Type your message or ask about nutrition..."}
             className="flex-1 px-4 py-3 bg-white text-slate-900 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-inner placeholder:text-slate-400"
           />
           <button
@@ -207,8 +365,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ messages, onSend, isTypi
             </svg>
           </button>
         </form>
-        <p className="text-[10px] text-center text-slate-400 mt-2">
-          Your friendly Health Assistant • Version 2.2 • Now with Document Analysis
+        <p className="text-[10px] text-center text-slate-400 mt-2 font-medium">
+          Your friendly Health Assistant • Secure Context Camera Access
         </p>
       </div>
     </div>

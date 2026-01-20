@@ -10,12 +10,18 @@ export interface Attachment {
   name: string;
 }
 
+export interface User {
+  name: string;
+  email: string;
+}
+
 export interface Message {
   id: string;
   role: Role;
   content: string;
   timestamp: Date;
   attachment?: Attachment;
+  groundingSources?: any[];
 }
 
 export interface ChatSession {
