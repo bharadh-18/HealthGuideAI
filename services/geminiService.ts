@@ -2,7 +2,8 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
 
-const API_KEY = process.env.API_KEY || "";
+// For Netlify/Vite, use VITE_ prefix. Fallback to process.env for other environments.
+const API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || "";
 
 const getDoctorsTool: FunctionDeclaration = {
   name: 'get_doctors',
@@ -36,6 +37,9 @@ export class GeminiService {
   private systemInstruction: string = "";
 
   constructor() {
+    if (!API_KEY) {
+      console.warn("Gemini API Key is missing. Ensure VITE_GEMINI_API_KEY is set in your environment.");
+    }
     this.ai = new GoogleGenAI({ apiKey: API_KEY });
   }
 
