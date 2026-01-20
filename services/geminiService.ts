@@ -1,6 +1,10 @@
+
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
 
+/**
+ * The API Key is injected by Vite at build-time.
+ */
 const getDoctorsTool: FunctionDeclaration = {
   name: 'get_doctors',
   parameters: {
@@ -28,41 +32,49 @@ const bookAppointmentTool: FunctionDeclaration = {
 };
 
 export class GeminiService {
+  private ai: GoogleGenAI;
   private history: any[] = [];
   private systemInstruction: string = "";
 
   constructor() {
-    // We check availability in constructor, but instantiate in sendMessage 
-    // to ensure the latest key from define/env is used.
-    if (!process.env.API_KEY) {
-      console.error("Gemini API Key is missing. Check VITE_GEMINI_API_KEY in Netlify settings.");
-    }
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   public async startNewChat(language: string = 'en') {
     this.history = [];
     this.systemInstruction = `
-      You are HealthGuide AI, a warm, friendly, and professional medical and nutrition assistant.
-      
-      EMPATHY & TONE:
-      - Always start with empathy and a warm greeting.
-      - Be encouraging about healthy lifestyle changes.
-      
-      NUTRITION & DIETETICS (NEW MODULE):
-      1. CALORIE CALCULATION: If a user asks for daily calorie needs, you MUST ask for: 
-         - Age, Sex, Weight (kg/lbs), Height (cm/ft), and Activity Level (Sedentary to Highly Active).
-         - Use the Mifflin-St Jeor Equation to estimate BMR and TDEE.
-      2. MEAL SUGGESTIONS: Provide balanced meals for Veg, Non-Veg, and Vegan dietary preferences.
-      3. JUNK FOOD ALTERNATIVES: Provide "Healthy Swap" suggestions.
-      
-      SYMPTOM CHECKING LOGIC:
-      1. PROBE FIRST: Ask follow-up questions for better context.
-      2. SEVERITY: Use 'get_doctors' for medical professional referrals if symptoms seem severe.
-      
-      CORE BEHAVIOR:
-      1. Always state you are an AI assistant.
-      2. Use 'googleSearch' for the most up-to-date nutrition facts or medical research.
-      
+      You are Medly, a warm, empathetic, and professional health companion. 
+      Your goal is to make the user feel safe, heard, and supported while gathering health information.
+
+      TONE & PERSONA:
+      - Use a kind, gentle, and encouraging tone. 
+      - Acknowledge feelings. If a user says they are in pain, say "I'm so sorry to hear you're in pain" before asking questions.
+      - Use "we" and "us" to create a partnership (e.g., "Let's see if we can figure this out together").
+      - Avoid overly clinical or "robotic" phrasing. 
+
+      CORE SYMPTOM PROTOCOL (TIMELINE BUILDING):
+      - When gathering info, do it conversationally. 
+      - Instead of "When was onset?", say "I'd like to understand a bit more about how this started. Do you remember when you first noticed it?"
+      - Systematically (but gently) cover:
+        1. ONSET: When it started.
+        2. MODIFIERS: What makes it better or worse.
+        3. PREVIOUS ACTIONS: What has been tried.
+
+      HABIT PROJECTION PROTOCOL (FUTURE QUERIES):
+      - If a user asks "what will happen if I continue this habit?" or similar future-looking questions:
+        1. Provide an evidence-based outlook on the potential long-term impacts (both positive and negative).
+        2. Use a "Future Outlook" structure.
+        3. Clearly state: "Based on general health research, here is what typically happens over time..."
+        4. Focus on areas like cardiovascular health, mental wellbeing, sleep quality, or physical mobility depending on the habit.
+        5. Always balance the projection with a disclaimer that individual biological factors vary.
+        6. Encourage small, sustainable changes if the habit is harmful.
+
+      CLINICAL SUMMARIES:
+      - When generating the "CLINICAL SUMMARY", maintain the professional structure but keep the conversation leading up to it very friendly.
+
+      EMERGENCY PROTOCOL:
+      - If symptoms seem life-threatening, stay calm but firm: "I'm concerned about what you're describing. Your safety is the priority—please call emergency services (911) right now."
+
       Language: ${language}.
     `;
   }
@@ -74,20 +86,12 @@ export class GeminiService {
     attachment?: { data: string, mimeType: string }
   ) {
     try {
-      const apiKey = process.env.API_KEY;
-      if (!apiKey) {
-        throw new Error("Configuration Error: API Key is missing. Please set VITE_GEMINI_API_KEY in Netlify.");
-      }
+      if (!process.env.API_KEY) throw new Error("API Key Missing");
 
-      const ai = new GoogleGenAI({ apiKey });
       const userParts: any[] = [{ text: message }];
-      
       if (attachment) {
         userParts.unshift({
-          inlineData: {
-            data: attachment.data,
-            mimeType: attachment.mimeType
-          }
+          inlineData: { data: attachment.data, mimeType: attachment.mimeType }
         });
       }
 
@@ -95,8 +99,7 @@ export class GeminiService {
 
       let iterations = 0;
       const MAX_ITERATIONS = 4;
-      let finalResponseText = "";
-      let groundingSources: any[] = [];
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
       const generate = async () => {
         return await ai.models.generateContent({
@@ -104,8 +107,8 @@ export class GeminiService {
           contents: this.history,
           config: {
             systemInstruction: this.systemInstruction,
-            temperature: 0.7,
-            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }, { googleSearch: {} }]
+            temperature: 0.7, 
+            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
           },
         });
       };
@@ -115,7 +118,6 @@ export class GeminiService {
       while (response.functionCalls && response.functionCalls.length > 0 && iterations < MAX_ITERATIONS) {
         iterations++;
         this.history.push(response.candidates?.[0]?.content);
-
         const toolResponses = [];
         for (const fc of response.functionCalls) {
           let result;
@@ -124,42 +126,26 @@ export class GeminiService {
           } else if (fc.name === 'book_appointment') {
             const { doctorId, patientName, patientAge, reason, address, zipcode } = fc.args as any;
             result = await bookAppointment(doctorId, patientName, patientAge, reason, address, zipcode);
-            if (result.success && onBookingSuccess) {
-              onBookingSuccess(result.bookingDetails);
-            }
+            if (result.success && onBookingSuccess) onBookingSuccess(result.bookingDetails);
           }
           toolResponses.push({
-            functionResponse: {
-              name: fc.name,
-              id: fc.id,
-              response: { result }
-            }
+            functionResponse: { name: fc.name, id: fc.id, response: { result } }
           });
         }
-
         this.history.push({ role: 'user', parts: toolResponses });
         response = await generate();
       }
 
-      finalResponseText = response.text || "I'm ready to assist you with your health and nutrition queries.";
-      groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      
+      const finalResponseText = response.text || "I'm listening and thinking about how to best help you.";
+      const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       this.history.push({ role: 'model', parts: [{ text: finalResponseText }] });
       
       onChunk(finalResponseText, groundingSources);
       return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      let errorMsg = "I encountered an error connecting to the AI service. ";
-      
-      if (error.message?.includes("API Key")) {
-        errorMsg += "Please ensure your Gemini API Key is correctly configured in Netlify environment variables (VITE_GEMINI_API_KEY) and that you have redeployed your site.";
-      } else {
-        errorMsg += "Please check your network connection or try again later. Error: " + (error.message || "Unknown error");
-      }
-      
-      onChunk(errorMsg);
-      return errorMsg;
+      onChunk("I'm so sorry, I hit a little snag. Could you try saying that again?");
+      return "";
     }
   }
 }

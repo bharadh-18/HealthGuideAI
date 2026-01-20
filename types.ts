@@ -15,6 +15,12 @@ export interface User {
   email: string;
 }
 
+export interface AppSettings {
+  thinkingMessages: string[];
+  lowBandwidthMode: boolean;
+  textOnlyMode: boolean;
+}
+
 export interface Message {
   id: string;
   role: Role;
@@ -22,6 +28,7 @@ export interface Message {
   timestamp: Date;
   attachment?: Attachment;
   groundingSources?: any[];
+  feedback?: 'up' | 'down' | null;
 }
 
 export interface ChatSession {
