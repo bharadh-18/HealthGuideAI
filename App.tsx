@@ -1,6 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { Header } from './components/Header';
@@ -18,9 +17,10 @@ const App: React.FC = () => {
   const [currentLanguage, setCurrentLanguage] = useState(SUPPORTED_LANGUAGES[0]);
   const [isTyping, setIsTyping] = useState(false);
   const [bookingDetails, setBookingDetails] = useState<any | null>(null);
-  
+
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
+  // Check for existing login on mount
   useEffect(() => {
     const savedUser = localStorage.getItem('healthguide_user');
     if (savedUser) {
@@ -29,36 +29,10 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (user) {
-      const storageKey = `health_sessions_${user.email}`;
-      const savedSessions = localStorage.getItem(storageKey);
-      
-      if (savedSessions) {
-        try {
-          const parsedSessions: ChatSession[] = JSON.parse(savedSessions);
-          setSessions(parsedSessions);
-          if (parsedSessions.length > 0) {
-            setActiveSessionId(parsedSessions[0].id);
-            geminiService.startNewChat(parsedSessions[0].language);
-          } else {
-            handleNewChat();
-          }
-        } catch (e) {
-          console.error("Failed to parse saved sessions", e);
-          handleNewChat();
-        }
-      } else {
-        handleNewChat();
-      }
+    if (user && sessions.length === 0) {
+      handleNewChat();
     }
   }, [user]);
-
-  useEffect(() => {
-    if (user && sessions.length > 0) {
-      const storageKey = `health_sessions_${user.email}`;
-      localStorage.setItem(storageKey, JSON.stringify(sessions));
-    }
-  }, [sessions, user]);
 
   const handleLogin = (newUser: User) => {
     localStorage.setItem('healthguide_user', JSON.stringify(newUser));
@@ -165,86 +139,45 @@ const App: React.FC = () => {
     }
   };
 
-  return (
-    <div className="h-screen w-screen bg-slate-50 overflow-hidden font-inter">
-      <AnimatePresence mode="wait">
-        {!user ? (
-          <motion.div
-            key="login"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.4, ease: "easeOut" }}
-            className="h-full w-full"
-          >
-            <LoginPage onLogin={handleLogin} />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="app"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex h-full w-full overflow-hidden"
-          >
-            <Sidebar 
-              sessions={sessions} 
-              activeId={activeSessionId} 
-              onSelect={handleSelectSession} 
-              onNewChat={handleNewChat}
-              isOpen={isSidebarOpen}
-              toggle={() => setIsSidebarOpen(!isSidebarOpen)}
-              onLogout={handleLogout}
-              user={user}
-            />
-            
-            <main className="flex-1 flex flex-col relative h-full">
-              <Header 
-                currentLanguage={currentLanguage} 
-                onLanguageChange={handleLanguageChange}
-                isSidebarOpen={isSidebarOpen}
-                toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-              />
-              
-              <div className="flex-1 overflow-hidden flex flex-col">
-                <motion.div
-                  initial={{ opacity: 0, y: -20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  <Disclaimer />
-                </motion.div>
-                <div className="flex-1 overflow-hidden relative">
-                  <AnimatePresence mode="wait">
-                    <motion.div
-                      key={activeSessionId || 'empty'}
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      transition={{ duration: 0.3, ease: "easeInOut" }}
-                      className="absolute inset-0"
-                    >
-                      <ChatWindow 
-                        messages={activeSession?.messages || []} 
-                        onSend={handleSendMessage}
-                        isTyping={isTyping}
-                      />
-                    </motion.div>
-                  </AnimatePresence>
-                </div>
-              </div>
-            </main>
-          </motion.div>
-        )}
-      </AnimatePresence>
+  if (!user) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
 
-      <AnimatePresence>
-        {bookingDetails && (
-          <BookingModal 
-            details={bookingDetails} 
-            onClose={() => setBookingDetails(null)} 
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden">
+      <Sidebar 
+        sessions={sessions} 
+        activeId={activeSessionId} 
+        onSelect={handleSelectSession} 
+        onNewChat={handleNewChat}
+        isOpen={isSidebarOpen}
+        toggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        onLogout={handleLogout}
+        user={user}
+      />
+      
+      <main className="flex-1 flex flex-col relative h-full">
+        <Header 
+          currentLanguage={currentLanguage} 
+          onLanguageChange={handleLanguageChange}
+          isSidebarOpen={isSidebarOpen}
+          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        />
+        
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <Disclaimer />
+          <ChatWindow 
+            messages={activeSession?.messages || []} 
+            onSend={handleSendMessage}
+            isTyping={isTyping}
           />
-        )}
-      </AnimatePresence>
+        </div>
+      </main>
+
+      <BookingModal 
+        details={bookingDetails} 
+        onClose={() => setBookingDetails(null)} 
+      />
     </div>
   );
 };

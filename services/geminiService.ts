@@ -1,12 +1,5 @@
-
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
-
-/**
- * The API Key is injected by Vite at build-time from Netlify Environment Variables.
- * See vite.config.ts for the injection logic.
- */
-// Guideline: Always use process.env.API_KEY directly when initializing.
 
 const getDoctorsTool: FunctionDeclaration = {
   name: 'get_doctors',
@@ -35,13 +28,15 @@ const bookAppointmentTool: FunctionDeclaration = {
 };
 
 export class GeminiService {
-  private ai: GoogleGenAI;
   private history: any[] = [];
   private systemInstruction: string = "";
 
   constructor() {
-    // Initializing directly with process.env.API_KEY as per instructions.
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // We check availability in constructor, but instantiate in sendMessage 
+    // to ensure the latest key from define/env is used.
+    if (!process.env.API_KEY) {
+      console.error("Gemini API Key is missing. Check VITE_GEMINI_API_KEY in Netlify settings.");
+    }
   }
 
   public async startNewChat(language: string = 'en') {
@@ -57,24 +52,16 @@ export class GeminiService {
       1. CALORIE CALCULATION: If a user asks for daily calorie needs, you MUST ask for: 
          - Age, Sex, Weight (kg/lbs), Height (cm/ft), and Activity Level (Sedentary to Highly Active).
          - Use the Mifflin-St Jeor Equation to estimate BMR and TDEE.
-      2. MEAL SUGGESTIONS: Provide balanced meals for:
-         - Veg (Vegetarian), Non-Veg, and Vegan dietary preferences.
-         - Ensure each suggestion includes a protein source, healthy fats, and complex carbs.
-      3. JUNK FOOD ALTERNATIVES: When asked about junk food (e.g., pizza, burgers, chips), provide a "Healthy Swap" table.
-      4. PORTION CONTROL: Teach the "Hand Method" (Palm = Protein, Fist = Veggies, Cupped Hand = Carbs, Thumb = Fats).
-      5. NUTRITION FACTS: Use your internal knowledge to provide accurate caloric and macro information for specific foods.
+      2. MEAL SUGGESTIONS: Provide balanced meals for Veg, Non-Veg, and Vegan dietary preferences.
+      3. JUNK FOOD ALTERNATIVES: Provide "Healthy Swap" suggestions.
       
       SYMPTOM CHECKING LOGIC:
-      1. PROBE FIRST: For symptoms like fever, ask temperature, duration, and "red flags".
-      2. SEVERITY: If fever > 103°F or red flags present, prioritize doctor referral via 'get_doctors'.
-      3. HOME CARE: Suggest mild treatments only for low-severity cases.
-      
-      FILE HANDLING:
-      - Summarize prescriptions or medical reports clearly.
+      1. PROBE FIRST: Ask follow-up questions for better context.
+      2. SEVERITY: Use 'get_doctors' for medical professional referrals if symptoms seem severe.
       
       CORE BEHAVIOR:
       1. Always state you are an AI assistant.
-      2. Use 'get_doctors' for medical professional referrals.
+      2. Use 'googleSearch' for the most up-to-date nutrition facts or medical research.
       
       Language: ${language}.
     `;
@@ -87,11 +74,14 @@ export class GeminiService {
     attachment?: { data: string, mimeType: string }
   ) {
     try {
-      if (!process.env.API_KEY) {
-        throw new Error("API Key Missing");
+      const apiKey = process.env.API_KEY;
+      if (!apiKey) {
+        throw new Error("Configuration Error: API Key is missing. Please set VITE_GEMINI_API_KEY in Netlify.");
       }
 
+      const ai = new GoogleGenAI({ apiKey });
       const userParts: any[] = [{ text: message }];
+      
       if (attachment) {
         userParts.unshift({
           inlineData: {
@@ -109,17 +99,13 @@ export class GeminiService {
       let groundingSources: any[] = [];
 
       const generate = async () => {
-        // Guideline: Create a new instance right before making an API call.
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         return await ai.models.generateContent({
           model: 'gemini-3-pro-preview',
           contents: this.history,
           config: {
             systemInstruction: this.systemInstruction,
             temperature: 0.7,
-            // Guideline: Only googleSearch is permitted. Do not use it with other tools. 
-            // Removed googleSearch to allow functionDeclarations for booking.
-            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
+            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }, { googleSearch: {} }]
           },
         });
       };
@@ -155,8 +141,7 @@ export class GeminiService {
         response = await generate();
       }
 
-      // Guideline: The response.text property directly returns the generated text content.
-      finalResponseText = response.text || "I'm here to support your health and nutrition journey.";
+      finalResponseText = response.text || "I'm ready to assist you with your health and nutrition queries.";
       groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       
       this.history.push({ role: 'model', parts: [{ text: finalResponseText }] });
@@ -165,7 +150,14 @@ export class GeminiService {
       return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      const errorMsg = "I'm sorry, I encountered an error processing your request. Please check your configuration.";
+      let errorMsg = "I encountered an error connecting to the AI service. ";
+      
+      if (error.message?.includes("API Key")) {
+        errorMsg += "Please ensure your Gemini API Key is correctly configured in Netlify environment variables (VITE_GEMINI_API_KEY) and that you have redeployed your site.";
+      } else {
+        errorMsg += "Please check your network connection or try again later. Error: " + (error.message || "Unknown error");
+      }
+      
       onChunk(errorMsg);
       return errorMsg;
     }
