@@ -1,8 +1,11 @@
-
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
 
-// For Netlify/Vite, use VITE_ prefix. Fallback to process.env for other environments.
+/**
+ * Access the API Key. 
+ * In Vite/Netlify environments, variables must be prefixed with VITE_.
+ * We use import.meta.env as the primary source.
+ */
 const API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || "";
 
 const getDoctorsTool: FunctionDeclaration = {
@@ -38,7 +41,7 @@ export class GeminiService {
 
   constructor() {
     if (!API_KEY) {
-      console.warn("Gemini API Key is missing. Ensure VITE_GEMINI_API_KEY is set in your environment.");
+      console.error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your Netlify Environment Variables.");
     }
     this.ai = new GoogleGenAI({ apiKey: API_KEY });
   }
@@ -105,7 +108,9 @@ export class GeminiService {
       let groundingSources: any[] = [];
 
       const generate = async () => {
-        return await this.ai.models.generateContent({
+        // Re-initialize to pick up any key changes during development or specific sessions
+        const genAI = new GoogleGenAI({ apiKey: API_KEY });
+        return await genAI.models.generateContent({
           model: 'gemini-3-pro-preview',
           contents: this.history,
           config: {
@@ -156,7 +161,7 @@ export class GeminiService {
       return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      const errorMsg = "I'm sorry, I'm having trouble with my nutrition database right now. Please try again.";
+      const errorMsg = "I'm sorry, I'm having trouble with my nutrition database right now. Please check if your API key is correctly configured in Netlify environment variables.";
       onChunk(errorMsg);
       return errorMsg;
     }
