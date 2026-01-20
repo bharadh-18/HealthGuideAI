@@ -1,12 +1,12 @@
+
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { getDoctors, bookAppointment } from "./supabaseService";
 
 /**
- * Access the API Key. 
- * In Vite/Netlify environments, variables must be prefixed with VITE_.
- * We use import.meta.env as the primary source.
+ * The API Key is injected by Vite at build-time from Netlify Environment Variables.
+ * See vite.config.ts for the injection logic.
  */
-const API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || "";
+// Guideline: Always use process.env.API_KEY directly when initializing.
 
 const getDoctorsTool: FunctionDeclaration = {
   name: 'get_doctors',
@@ -40,10 +40,8 @@ export class GeminiService {
   private systemInstruction: string = "";
 
   constructor() {
-    if (!API_KEY) {
-      console.error("Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in your Netlify Environment Variables.");
-    }
-    this.ai = new GoogleGenAI({ apiKey: API_KEY });
+    // Initializing directly with process.env.API_KEY as per instructions.
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   public async startNewChat(language: string = 'en') {
@@ -64,7 +62,7 @@ export class GeminiService {
          - Ensure each suggestion includes a protein source, healthy fats, and complex carbs.
       3. JUNK FOOD ALTERNATIVES: When asked about junk food (e.g., pizza, burgers, chips), provide a "Healthy Swap" table.
       4. PORTION CONTROL: Teach the "Hand Method" (Palm = Protein, Fist = Veggies, Cupped Hand = Carbs, Thumb = Fats).
-      5. NUTRITION FACTS: Use your knowledge and the Search Tool to provide accurate caloric and macro information for specific foods.
+      5. NUTRITION FACTS: Use your internal knowledge to provide accurate caloric and macro information for specific foods.
       
       SYMPTOM CHECKING LOGIC:
       1. PROBE FIRST: For symptoms like fever, ask temperature, duration, and "red flags".
@@ -77,7 +75,6 @@ export class GeminiService {
       CORE BEHAVIOR:
       1. Always state you are an AI assistant.
       2. Use 'get_doctors' for medical professional referrals.
-      3. Use 'googleSearch' for the most up-to-date nutrition facts or medical research.
       
       Language: ${language}.
     `;
@@ -90,6 +87,10 @@ export class GeminiService {
     attachment?: { data: string, mimeType: string }
   ) {
     try {
+      if (!process.env.API_KEY) {
+        throw new Error("API Key Missing");
+      }
+
       const userParts: any[] = [{ text: message }];
       if (attachment) {
         userParts.unshift({
@@ -108,15 +109,17 @@ export class GeminiService {
       let groundingSources: any[] = [];
 
       const generate = async () => {
-        // Re-initialize to pick up any key changes during development or specific sessions
-        const genAI = new GoogleGenAI({ apiKey: API_KEY });
-        return await genAI.models.generateContent({
+        // Guideline: Create a new instance right before making an API call.
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        return await ai.models.generateContent({
           model: 'gemini-3-pro-preview',
           contents: this.history,
           config: {
             systemInstruction: this.systemInstruction,
             temperature: 0.7,
-            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }, { googleSearch: {} }]
+            // Guideline: Only googleSearch is permitted. Do not use it with other tools. 
+            // Removed googleSearch to allow functionDeclarations for booking.
+            tools: [{ functionDeclarations: [getDoctorsTool, bookAppointmentTool] }]
           },
         });
       };
@@ -152,6 +155,7 @@ export class GeminiService {
         response = await generate();
       }
 
+      // Guideline: The response.text property directly returns the generated text content.
       finalResponseText = response.text || "I'm here to support your health and nutrition journey.";
       groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       
@@ -161,7 +165,7 @@ export class GeminiService {
       return finalResponseText;
     } catch (error: any) {
       console.error("Gemini Error:", error);
-      const errorMsg = "I'm sorry, I'm having trouble with my nutrition database right now. Please check if your API key is correctly configured in Netlify environment variables.";
+      const errorMsg = "I'm sorry, I encountered an error processing your request. Please check your configuration.";
       onChunk(errorMsg);
       return errorMsg;
     }
